@@ -3,14 +3,16 @@ ALL THE BEST
 CASO: CALCULO APORTE LEY SBIF CON LOGICA DE AÑO VENCIDO (-1 AÑO ACTUAL)
 
 DESCR.: PROCESO AUTOMATIZADO PARA CALCULAR APORTES LEGALES SBIF CON MANEJO
-DE EXCEPCIONES Y ESTRUCTURAS DE MEMORIA
+DE EXCEPCIONES Y ESTRUCTURAS DE MEMORIA.
+
+
 ===============================================*/
     
 SET DEFINE OFF;
 SET SERVEROUTPUT ON;
 --DEFINIMOS LA VARIABLE BIND PARA EL PERIODO DE EJECUCION
 VARIABLE b_fecha_ejecucion VARCHAR2(10);
-EXEC :b_fecha_ejecucion := '31/12/2026';
+EXEC :b_fecha_ejecucion := '31/12/2026'; 
 
 DECLARE
     --VARRAY PARA TIPOS DE TRANSACCION DE TARJETA
@@ -32,21 +34,23 @@ DECLARE
     );
     v_totales r_totales_grupo;
     
-    -- DECLARACION DE VARIABLES Y EXCEPCIONES
+    -- DECLARACION DE VARIABLES ESCALARES
     v_anio_proceso NUMBER(4);
     v_porcentaje    NUMBER(3);
     v_monto_aporte NUMBER(12);
     
-    -- CONTADORES PARA VALIDACION FINAL
+    -- CONTADORES PARA VALIDACION DE INTEGRIDAD
     v_filas_procesadas  NUMBER := 0;
     v_filas_esperadas NUMBER := 0;
+    
+    /*>>>MANEJO DE EXCEPCIONES<<<*/
     e_error_validacion  EXCEPTION; --EXCEPCION DEFINIDA POR ALONSO
-    --EXCEPCION NO PREDEFINIDA 
-    e_valor_excedido EXCEPTION;
+    e_valor_excedido EXCEPTION; -- EXCEPCION NO PREDENIFIDA 
     PRAGMA EXCEPTION_INIT(e_valor_excedido, -1438); -- hace referencia al error ORA-01438, el cual ocurre cuando se intenta insertar o actualizar una columna numerica con un valor que excede la precision, como el total de digitos en esa columna
     
     
-    --CURSORES
+    -->>>CURSORES EXPLICITOS<<<
+    --CURSOR 1 PRINCIPAL
     --AGRUPA POR MES Y TIPO PARA CONTROLAR EL FLUJO PRINCIPAL Y LLENAR LA TABLA RESUYMEN
     CURSOR c_resumen IS
         SELECT
@@ -67,7 +71,7 @@ DECLARE
     v_reg_res c_resumen%ROWTYPE;
     
     
-    --CURSOR EXPLICITO CON PARAMETROS, OBTIENE EL DETALLE PARA CADA GRUPO DEL CURSOR RESUMEN
+    --CURSOR DETALLE: CURSOR PARAMETRIZADO PARA EFICIENCIA; TRAE EL DETALLE SOLO DEL GRUPO ACTUAL 
     CURSOR c_detalle (p_mes VARCHAR2, p_cod_tipo NUMBER) IS
         SELECT
             c.NUMRUN,
@@ -86,8 +90,8 @@ DECLARE
     v_reg_det c_detalle%ROWTYPE;
     
 BEGIN
-    -- INICIO DEL PROCESO
-   
+    -- >>>INICIO DEL PROCESO<<<
+       --INICIALIZACION DE VARIABLES DESDE VARRAY
      v_tipo_1 := v_tipos_validos(1);
     
     -- OBTENEMOS EL AÑO DE LA VARIABLE BIND
@@ -108,13 +112,15 @@ BEGIN
     EXECUTE IMMEDIATE 'TRUNCATE TABLE RESUMEN_APORTE_SBIF';
     
     
-    --PROCESAMIENTO DE LOS CURSORES
+    -->>>PROCESAMIENTO DE LOS CURSORES<<<
     OPEN c_resumen;
     LOOP
         FETCH c_resumen INTO v_reg_res;
         EXIT WHEN c_resumen%NOTFOUND;
         
-        
+        /*LOGICA DE NEGOCIO; LIMPIEZA DE DATOS
+            SE DETECTA SI EL NOMBRE VIENE 'SUCIO' (EN EL SCRIPT DE POBLAMIENTO FIGURA ' S uper' Y
+            SE CORRIGE USANDO EL VALOR OFICIAL ALMACENADO EL EN VARRAY )*/
         IF v_reg_res.nombre_tipo LIKE 'S%per%' THEN
             v_nombre_limpio := v_tipos_validos(2); 
         ELSE
@@ -131,9 +137,8 @@ BEGIN
             FETCH c_detalle INTO v_reg_det;
             EXIT WHEN c_detalle%NOTFOUND;
             
-            --BUSCAMOS EL PORCETNAJE EN LA TABLA DE RTRAMOS
-            --v_porcentaje := 0;
-            --
+            /*LOGICA DE CALCULO; OBTENCION DEL PORCENTAJE SBIF
+                SE BUSCA LA TABLA TRAMO_APORTE_SBIF SEGUN EL MONTO TOTAL
             BEGIN
                 SELECT PORC_APORTE_SBIF
                 INTO v_porcentaje
@@ -144,14 +149,16 @@ BEGIN
                 WHEN NO_DATA_FOUND THEN v_porcentaje := 0;
             END;
             
-            --calculos
+            /*LOGICA DE CALCULO: MONTO DEL APORTE
+                REGLA: COMNTO TOTAL * PORCENTAJE /100.
+                SE UTILIZA ROUND PARA REDONDEAR AL ENTERO MAS CECANO SEGUN NORMA*/
             v_monto_aporte := ROUND(v_reg_det.monto_total_transaccion * v_porcentaje / 100 );
             
-            --ACUMULAMOS EN EL REGISTRO
+            --ACUMULAMOS EN EL REGISTRO (MEMORIA)
             v_totales.acum_monto := v_totales.acum_monto + v_reg_det.monto_total_transaccion;
             v_totales.acum_aporte := v_totales.acum_aporte + v_monto_aporte;
             
-            --INSERTAMOS DETALLE EN LA TABLA
+            --INSERTAMOS DETALLE EN LA TABLA, SE VUELVAN LOS DARTOS ACUMULADOS EN EL RECORD HACIA LA TABLA FINAL
             INSERT INTO detalle_aporte_sbif
             (NUMRUN,DVRUN,NRO_TARJETA,NRO_TRANSACCION,FECHA_TRANSACCION,TIPO_TRANSACCION,MONTO_TRANSACCION,APORTE_SBIF)
             
@@ -170,7 +177,7 @@ BEGIN
     
     END LOOP;
     CLOSE c_resumen;
-    
+    -->>> CIERRE Y CONTROL TRANSACCIONAL<<<
     --CONFIRMACION CONDICIONAL
     IF v_filas_procesadas = v_filas_esperadas THEN
         COMMIT;
@@ -193,9 +200,10 @@ EXCEPTION
     WHEN OTHERS THEN
         ROLLBACK;
         DBMS_OUTPUT.PUT_LINE('ERROR NO CONTROLADO: ' || SQLERRM);
+        DBMS_OUTPUT.PUT_LINE('TRANSACCION REVERTIDA (ROLLBACK)');
 END;
 /
-
+--CONSUTLAS DE VERIFICACION
 --SELECT * FROM RESUMEN_APORTE_SBIF;
 --SELECT * FROM DETALLE_APORTE_SBIF;
         
@@ -206,4 +214,5 @@ END;
     
     
     
+
 
